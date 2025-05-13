@@ -26,6 +26,12 @@ class GemHunter:
         self.var_mapping = {}
         self.reverse_mapping = {}
         self._create_variable_mapping()
+
+    def is_numbered_cell(self, pos: int) -> bool:
+        """Check if the position is a numbered cell."""
+        row = pos // self.cols
+        col = pos % self.cols
+        return any(r == row and c == col for r, c, _ in self.numbered_cells)
         
     def _create_variable_mapping(self):
         """Create mapping between grid positions and CNF variables."""
@@ -117,23 +123,65 @@ class GemHunter:
         return True
     
     def solve_backtracking(self) -> Tuple[bool, List[int], float]:
-        """Solve the game using backtracking approach."""
+        """Solve the game using backtracking approach with proper constraint checking."""
         start_time = time.time()
         n_vars = self.rows * self.cols
         assignment = [0] * n_vars
         
+        def check_constraints(pos: int) -> bool:
+            """Check if current partial assignment satisfies all constraints up to pos."""
+            # Check all numbered cells
+            for row, col, num in self.numbered_cells:
+                neighbors = self.get_neighbors(row, col)
+                trap_count = 0
+                assigned_count = 0
+                
+                # Count traps and assigned cells in neighbors
+                for n_row, n_col in neighbors:
+                    n_pos = n_row * self.cols + n_col
+                    if n_pos <= pos:  # Only check assigned positions
+                        assigned_count += 1
+                        if assignment[n_pos] > 0:  # If it's a trap
+                            trap_count += 1
+                
+                # If we have too many traps already, this is invalid
+                if trap_count > num:
+                    return False
+                
+                # If all neighbors are assigned, we must have exactly num traps
+                if assigned_count == len(neighbors) and trap_count != num:
+                    return False
+                
+                # If some neighbors are unassigned, check if we can still satisfy the constraint
+                if assigned_count < len(neighbors):
+                    remaining_cells = len(neighbors) - assigned_count
+                    # We need at least (num - trap_count) more traps
+                    min_required_traps = num - trap_count
+                    # We can't have more traps than remaining cells
+                    if min_required_traps > remaining_cells:
+                        return False
+                    # We can't have more traps than the number requires
+                    if trap_count + remaining_cells < num:
+                        return False
+            
+            return True
+
         def backtrack(pos: int) -> bool:
             if pos == n_vars:
                 return self._is_valid_assignment(assignment)
             
+            # Skip numbered cells as they can't be traps or gems
+            if self.is_numbered_cell(pos):
+                return backtrack(pos + 1)
+
             # Try setting current position to trap
             assignment[pos] = 1
-            if backtrack(pos + 1):
+            if check_constraints(pos) and backtrack(pos + 1):
                 return True
                 
             # Try setting current position to gem
             assignment[pos] = -1
-            if backtrack(pos + 1):
+            if check_constraints(pos) and backtrack(pos + 1):
                 return True
                 
             # Backtrack
@@ -166,4 +214,28 @@ class GemHunter:
         for row, col, num in self.numbered_cells:
             display_grid[row, col] = str(num)
             
-        print(display_grid) 
+        print(display_grid)
+    
+    @classmethod
+    def from_file(cls, filename: str) -> Tuple[Tuple[int, int], List[Tuple[int, int, int]]]:
+
+        numbered_cells = []
+        rows = []
+        
+        with open(filename, 'r') as f:
+            for i, line in enumerate(f):
+                # Split the line and remove any whitespace
+                cells = [cell.strip() for cell in line.split(',')]
+                rows.append(len(cells))
+                
+                # Process each cell in the row
+                for j, cell in enumerate(cells):
+                    if cell != '_':  # If it's a number
+                        numbered_cells.append((i, j, int(cell)))
+        
+        # Verify all rows have the same length
+        if len(set(rows)) != 1:
+            raise ValueError("All rows must have the same length")
+            
+        grid_size = (len(rows), rows[0])
+        return grid_size, numbered_cells 
