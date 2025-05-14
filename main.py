@@ -1,7 +1,7 @@
 from gem_hunter import GemHunter
 
 def main():
-    grid_size, numbered_cells = GemHunter.from_file("./testcases/input_2.txt")
+    grid_size, numbered_cells = GemHunter.from_file("./testcases/input_3.txt")
 
     game = GemHunter(grid_size, numbered_cells)
     
@@ -12,12 +12,12 @@ def main():
         game.display_solution(solution)
         print(f"Time taken: {pysat_time:.4f} seconds")
     
-    print("\nSolving with Brute Force...")
-    success, solution, brute_time = game.solve_brute_force()
-    if success:
-       print("\nBrute Force Solution:")
-       game.display_solution(solution)
-       print(f"Time taken: {brute_time:.4f} seconds")
+    # print("\nSolving with Brute Force...")
+    # success, solution, brute_time = game.solve_brute_force()
+    # if success:
+    #    print("\nBrute Force Solution:")
+    #    game.display_solution(solution)
+    #    print(f"Time taken: {brute_time:.4f} seconds")
     
     print("\nSolving with Backtracking...")
     success, solution, backtrack_time = game.solve_backtracking()

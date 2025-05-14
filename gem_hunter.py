@@ -176,12 +176,12 @@ class GemHunter:
 
             # Try setting current position to trap
             assignment[pos] = 1
-            if check_constraints(pos) and backtrack(pos + 1):
+            if backtrack(pos + 1):
                 return True
                 
             # Try setting current position to gem
             assignment[pos] = -1
-            if check_constraints(pos) and backtrack(pos + 1):
+            if backtrack(pos + 1):
                 return True
                 
             # Backtrack
