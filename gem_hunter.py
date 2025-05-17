@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Set
 import time
 from pysat.solvers import Glucose3
 from pysat.formula import CNF
@@ -20,10 +20,10 @@ class GemHunter:
         self.reverse_mapping = {}
         self._create_variable_mapping()
 
-    def is_numbered_cell(self, pos: int) -> bool:
-        row = pos // self.cols
-        col = pos % self.cols
-        return any(r == row and c == col for r, c, _ in self.numbered_cells)
+    def is_numbered_cell(self, row: int, col: int) -> bool:
+        for r, c, _ in self.numbered_cells:
+            if (row, col) == (r, c):
+                return True
         
     def _create_variable_mapping(self):
         var_id = 1
@@ -34,12 +34,16 @@ class GemHunter:
                 var_id += 1
                 
     def get_neighbors(self, row: int, col: int) -> List[Tuple[int, int]]:
-        neighbors = []
-        for i in range(max(0, row-1), min(self.rows, row+2)):
-            for j in range(max(0, col-1), min(self.cols, col+2)):
-                if (i, j) != (row, col):
-                    neighbors.append((i, j))
-        return neighbors
+        neightbors_pos = [(row-1, col-1), (row-1, col), (row-1, col+1), (row, col-1),
+                          (row, col+1), (row+1, col-1), (row+1, col), (row+1, col+1)]
+        
+        neightbors = []
+
+        for r, c in neightbors_pos:
+            if 0 <= r < self.rows and 0 <= c < self.cols:
+                neightbors.append((r, c))
+
+        return neightbors
     
     def generate_cnf(self) -> CNF:
         cnf = CNF()
@@ -53,7 +57,10 @@ class GemHunter:
         for row, col, num in self.numbered_cells:
             neighbors = self.get_neighbors(row, col)
             # Filter out numbered cells from neighbors
-            valid_neighbors = [(r, c) for r, c in neighbors if not any((r == nr and c == nc) for nr, nc, _ in self.numbered_cells)]
+            valid_neighbors = []
+            for n_row, n_col in neighbors:
+                if not self.is_numbered_cell(n_row, n_col):
+                    valid_neighbors.append((n_row, n_col))
             neighbor_vars = [self.var_mapping[n] for n in valid_neighbors]
             
             # "At least num" - Every combination of (len(neighbors) - num + 1) cells must contain at least one trap if num > 0
@@ -91,7 +98,7 @@ class GemHunter:
                     assignment[pos] = 1  # This is a trap
             
             # Ensure numbered cells are set correctly (they should be neither trap nor gem)
-            for row, col, num in self.numbered_cells:
+            for row, col, _ in self.numbered_cells:
                 pos = row * self.cols + col
                 assignment[pos] = 0  # Mark as numbered cell
             
@@ -104,19 +111,34 @@ class GemHunter:
     def solve_brute_force(self) -> Tuple[bool, List[int], float]:
         start_time = time.time()
         n_vars = self.rows * self.cols
-        
-        # Try all possible combinations
-        for i in range(2 ** n_vars):
-            assignment = []
-            temp = i
-            for _ in range(n_vars):
-                assignment.append(1 if temp % 2 else -1)
-                temp //= 2
-            
-            if self._is_valid_assignment(assignment):
+        numbered_positions = set((row * self.cols + col) for row, col, _ in self.numbered_cells)
+        non_numbered_positions = [i for i in range(n_vars) if i not in numbered_positions]
+        n_non_numbered = len(non_numbered_positions)
+
+        # Precompute valid bounds for each numbered cell
+        constraints = {pos: num for row, col, num in self.numbered_cells for pos in [row * self.cols + col]}
+
+        def _is_valid_assignment(assignment: List[int], constraints: dict) -> bool:
+            for pos, num in constraints.items():
+                row, col = pos // self.cols, pos % self.cols
+                neighbors = self.get_neighbors(row, col)
+                trap_count = sum(1 for n in neighbors if assignment[n[0] * self.cols + n[1]] == 1)
+                
+                if trap_count != num:
+                    return False
+            return True
+
+        # Try all possible combinations for non-numbered cells using bit manipulation
+        for mask in range(1 << n_non_numbered):  
+            assignment = [0] * n_vars  # 0 for numbered cells
+            for idx, pos in enumerate(non_numbered_positions):
+                assignment[pos] = 1 if (mask >> idx) & 1 else -1  # Use bit manipulation to assign trap/gem
+
+            # Check constraints early to prune invalid cases
+            if _is_valid_assignment(assignment, constraints):
                 end_time = time.time()
                 return True, assignment, end_time - start_time
-                
+
         end_time = time.time()
         return False, None, end_time - start_time
     
@@ -174,8 +196,9 @@ class GemHunter:
             if pos == n_vars:
                 return True  # All positions assigned and constraints satisfied
             
+            row, col = pos // self.cols, pos % self.cols
             # Skip numbered cells as they can't be traps or gems
-            if self.is_numbered_cell(pos):
+            if self.is_numbered_cell(row, col):
                 assignment[pos] = 0  # Just to be explicit
                 return backtrack(pos + 1)
 
