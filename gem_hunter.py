@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple, Set
+from typing import List, Tuple
 import time
 from pysat.solvers import Glucose3
 from pysat.formula import CNF
@@ -7,13 +7,6 @@ from itertools import combinations
 
 class GemHunter:
     def __init__(self, grid_size: Tuple[int, int], numbered_cells: List[Tuple[int, int, int]]):
-        """
-        Initialize the Gem Hunter game.
-        
-        Args:
-            grid_size: Tuple of (rows, cols) for the grid
-            numbered_cells: List of (row, col, number) tuples representing numbered cells
-        """
         self.rows, self.cols = grid_size
         self.grid = np.zeros(grid_size, dtype=int)
         self.numbered_cells = numbered_cells
@@ -28,13 +21,11 @@ class GemHunter:
         self._create_variable_mapping()
 
     def is_numbered_cell(self, pos: int) -> bool:
-        """Check if the position is a numbered cell."""
         row = pos // self.cols
         col = pos % self.cols
         return any(r == row and c == col for r, c, _ in self.numbered_cells)
         
     def _create_variable_mapping(self):
-        """Create mapping between grid positions and CNF variables."""
         var_id = 1
         for i in range(self.rows):
             for j in range(self.cols):
@@ -43,7 +34,6 @@ class GemHunter:
                 var_id += 1
                 
     def get_neighbors(self, row: int, col: int) -> List[Tuple[int, int]]:
-        """Get valid neighboring cells for a given position."""
         neighbors = []
         for i in range(max(0, row-1), min(self.rows, row+2)):
             for j in range(max(0, col-1), min(self.cols, col+2)):
@@ -52,49 +42,66 @@ class GemHunter:
         return neighbors
     
     def generate_cnf(self) -> CNF:
-        """Generate CNF clauses for the game."""
         cnf = CNF()
         
-        # For each numbered cell, create constraints
+        # First, add constraints to ensure numbered cells cannot be traps
+        for row, col, _ in self.numbered_cells:
+            var_id = self.var_mapping[(row, col)]
+            cnf.append([-var_id])  # Force numbered cells to not be traps
+        
+        # For each numbered cell, create constraints for exactly num traps
         for row, col, num in self.numbered_cells:
             neighbors = self.get_neighbors(row, col)
-            neighbor_vars = [self.var_mapping[n] for n in neighbors]
+            # Filter out numbered cells from neighbors
+            valid_neighbors = [(r, c) for r, c in neighbors if not any((r == nr and c == nc) for nr, nc, _ in self.numbered_cells)]
+            neighbor_vars = [self.var_mapping[n] for n in valid_neighbors]
             
-            # Create clauses for exactly 'num' traps
-            # For each subset of size num+1, at least one must be a gem
-            if num + 1 <= len(neighbor_vars):
-                for trap_positions in combinations(neighbor_vars, num + 1):
-                    cnf.append([-v for v in trap_positions])
+            # "At least num" - Every combination of (len(neighbors) - num + 1) cells must contain at least one trap if num > 0
+            if num > 0 and len(neighbor_vars) > num:
+                for subset in combinations(neighbor_vars, len(neighbor_vars) - num + 1):
+                    cnf.append([v for v in subset])
             
-            # For each subset of size len(neighbors)-num+1, at least one must be a trap
-            if len(neighbor_vars) - num + 1 > 0:
-                for trap_positions in combinations(neighbor_vars, len(neighbor_vars) - num + 1):
-                    cnf.append(trap_positions)
-        
+            # "At most num" - Every combination of (num + 1) cells must contains number of gem = len(neighbors_vars) - num
+            if num < len(neighbor_vars):
+                for subset in combinations(neighbor_vars, num + 1):
+                    cnf.append([-v for v in subset])
         return cnf
-    
+        
     def solve_with_pysat(self) -> Tuple[bool, List[int], float]:
-        """Solve the game using pysat."""
-        cnf = self.generate_cnf()
+        cnf = self.generate_cnf()   
         solver = Glucose3()
         solver.append_formula(cnf)
         
         start_time = time.time()
-        solution = solver.solve()
+        satisfiable = solver.solve()
         end_time = time.time()
         
-        if solution:
+        if satisfiable:
             model = solver.get_model()
-            # Convert model to the same format as other solvers
-            assignment = [0] * (self.rows * self.cols)
+            
+            # Initialize all cells as gems (-1)
+            assignment = [-1] * (self.rows * self.cols)
+            
+            # Set traps based on positive variables in the model
             for var in model:
-                if abs(var) <= len(assignment):
-                    assignment[abs(var)-1] = 1 if var > 0 else -1
+                if var > 0 and var <= len(assignment):
+                    var_id = var
+                    row, col = self.reverse_mapping[var_id]
+                    pos = row * self.cols + col
+                    assignment[pos] = 1  # This is a trap
+            
+            # Ensure numbered cells are set correctly (they should be neither trap nor gem)
+            for row, col, num in self.numbered_cells:
+                pos = row * self.cols + col
+                assignment[pos] = 0  # Mark as numbered cell
+            
             return True, assignment, end_time - start_time
+        
+        # If unsatisfiable, print more info
+        print("SAT solver found problem unsatisfiable")
         return False, None, end_time - start_time
     
     def solve_brute_force(self) -> Tuple[bool, List[int], float]:
-        """Solve the game using brute force approach."""
         start_time = time.time()
         n_vars = self.rows * self.cols
         
@@ -114,7 +121,6 @@ class GemHunter:
         return False, None, end_time - start_time
     
     def _is_valid_assignment(self, assignment: List[int]) -> bool:
-        """Check if an assignment satisfies all constraints."""
         for row, col, num in self.numbered_cells:
             neighbors = self.get_neighbors(row, col)
             trap_count = sum(1 for n in neighbors if assignment[self.var_mapping[n]-1] > 0)
@@ -123,13 +129,11 @@ class GemHunter:
         return True
     
     def solve_backtracking(self) -> Tuple[bool, List[int], float]:
-        """Solve the game using backtracking approach with proper constraint checking."""
         start_time = time.time()
         n_vars = self.rows * self.cols
         assignment = [0] * n_vars
         
         def check_constraints(pos: int) -> bool:
-            """Check if current partial assignment satisfies all constraints up to pos."""
             # Check all numbered cells
             for row, col, num in self.numbered_cells:
                 neighbors = self.get_neighbors(row, col)
@@ -139,7 +143,7 @@ class GemHunter:
                 # Count traps and assigned cells in neighbors
                 for n_row, n_col in neighbors:
                     n_pos = n_row * self.cols + n_col
-                    if n_pos <= pos:  # Only check assigned positions
+                    if n_pos <= pos and assignment[n_pos] != 0:  # Only check assigned positions
                         assigned_count += 1
                         if assignment[n_pos] > 0:  # If it's a trap
                             trap_count += 1
@@ -168,20 +172,21 @@ class GemHunter:
 
         def backtrack(pos: int) -> bool:
             if pos == n_vars:
-                return self._is_valid_assignment(assignment)
+                return True  # All positions assigned and constraints satisfied
             
             # Skip numbered cells as they can't be traps or gems
             if self.is_numbered_cell(pos):
+                assignment[pos] = 0  # Just to be explicit
                 return backtrack(pos + 1)
 
             # Try setting current position to trap
             assignment[pos] = 1
-            if backtrack(pos + 1):
+            if check_constraints(pos) and backtrack(pos + 1):
                 return True
                 
             # Try setting current position to gem
             assignment[pos] = -1
-            if backtrack(pos + 1):
+            if check_constraints(pos) and backtrack(pos + 1):
                 return True
                 
             # Backtrack
@@ -194,9 +199,8 @@ class GemHunter:
         if solution_found:
             return True, assignment, end_time - start_time
         return False, None, end_time - start_time
-    
+        
     def display_solution(self, solution: List[int]):
-        """Display the solution grid."""
         if not solution:
             print("No solution found!")
             return
@@ -215,27 +219,3 @@ class GemHunter:
             display_grid[row, col] = str(num)
             
         print(display_grid)
-    
-    @classmethod
-    def from_file(cls, filename: str) -> Tuple[Tuple[int, int], List[Tuple[int, int, int]]]:
-
-        numbered_cells = []
-        rows = []
-        
-        with open(filename, 'r') as f:
-            for i, line in enumerate(f):
-                # Split the line and remove any whitespace
-                cells = [cell.strip() for cell in line.split(',')]
-                rows.append(len(cells))
-                
-                # Process each cell in the row
-                for j, cell in enumerate(cells):
-                    if cell != '_':  # If it's a number
-                        numbered_cells.append((i, j, int(cell)))
-        
-        # Verify all rows have the same length
-        if len(set(rows)) != 1:
-            raise ValueError("All rows must have the same length")
-            
-        grid_size = (len(rows), rows[0])
-        return grid_size, numbered_cells 
