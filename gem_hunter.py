@@ -1,244 +1,164 @@
-import numpy as np
-from typing import List, Tuple, Set
 import time
-from pysat.solvers import Glucose3
 from pysat.formula import CNF
-from itertools import combinations
+from pysat.solvers import Solver
+from pysat.card import CardEnc
+from itertools import product
 
 class GemHunter:
-    def __init__(self, grid_size: Tuple[int, int], numbered_cells: List[Tuple[int, int, int]]):
-        self.rows, self.cols = grid_size
-        self.grid = np.zeros(grid_size, dtype=int)
-        self.numbered_cells = numbered_cells
-        
-        # Initialize grid with numbered cells
-        for row, col, num in numbered_cells:
-            self.grid[row, col] = num
-            
-        # Create variable mapping for CNF
-        self.var_mapping = {}
-        self.reverse_mapping = {}
-        self._create_variable_mapping()
+    def __init__(self, filename):
+        self.filename = filename
+        with open(filename, 'r') as f:
+            lines = [line.strip() for line in f if line.strip()]
+        self.grid = [[cell.strip() for cell in line.split(',')] for line in lines]
+        self.rows = len(self.grid)
+        self.cols = len(self.grid[0]) if self.rows > 0 else 0
 
-    def is_numbered_cell(self, row: int, col: int) -> bool:
-        for r, c, _ in self.numbered_cells:
-            if (row, col) == (r, c):
-                return True
-        
-    def _create_variable_mapping(self):
-        var_id = 1
+        self.var_map = {}
+        self.rev_map = {}
+        vid = 1
         for i in range(self.rows):
             for j in range(self.cols):
-                self.var_mapping[(i, j)] = var_id
-                self.reverse_mapping[var_id] = (i, j)
-                var_id += 1
-                
-    def get_neighbors(self, row: int, col: int) -> List[Tuple[int, int]]:
-        neightbors_pos = [(row-1, col-1), (row-1, col), (row-1, col+1), (row, col-1),
-                          (row, col+1), (row+1, col-1), (row+1, col), (row+1, col+1)]
-        
-        neightbors = []
+                if self.grid[i][j] == '_':
+                    self.var_map[(i, j)] = vid
+                    self.rev_map[vid] = (i, j)
+                    vid += 1
+        self.num_vars = vid - 1
 
-        for r, c in neightbors_pos:
-            if 0 <= r < self.rows and 0 <= c < self.cols:
-                neightbors.append((r, c))
+        self.number_cells = []
+        for i in range(self.rows):
+            for j in range(self.cols):
+                if self.grid[i][j].isdigit():
+                    num = int(self.grid[i][j])
+                    neighbors = []
+                    for dx, dy in product([-1, 0, 1], repeat=2):
+                        if dx == 0 and dy == 0:
+                            continue
+                        ni, nj = i + dx, j + dy
+                        if 0 <= ni < self.rows and 0 <= nj < self.cols:
+                            if self.grid[ni][nj] == '_' and (ni, nj) in self.var_map:
+                                neighbors.append(self.var_map[(ni, nj)])
+                    self.number_cells.append((num, neighbors))
 
-        return neightbors
-    
-    def generate_cnf(self) -> CNF:
+    def solve_with_sat(self):
+        start = time.time()
         cnf = CNF()
-        
-        # First, add constraints to ensure numbered cells cannot be traps
-        for row, col, _ in self.numbered_cells:
-            var_id = self.var_mapping[(row, col)]
-            cnf.append([-var_id])  # Force numbered cells to not be traps
-        
-        # For each numbered cell, create constraints for exactly num traps
-        for row, col, num in self.numbered_cells:
-            neighbors = self.get_neighbors(row, col)
-            # Filter out numbered cells from neighbors
-            valid_neighbors = []
-            for n_row, n_col in neighbors:
-                if not self.is_numbered_cell(n_row, n_col):
-                    valid_neighbors.append((n_row, n_col))
-            neighbor_vars = [self.var_mapping[n] for n in valid_neighbors]
-            
-            # "At least num" - Every combination of (len(neighbors) - num + 1) cells must contain at least one trap if num > 0
-            if num > 0 and len(neighbor_vars) > num:
-                for subset in combinations(neighbor_vars, len(neighbor_vars) - num + 1):
-                    cnf.append([v for v in subset])
-            
-            # "At most num" - Every combination of (num + 1) cells must contains number of gem = len(neighbors_vars) - num
-            if num < len(neighbor_vars):
-                for subset in combinations(neighbor_vars, num + 1):
-                    cnf.append([-v for v in subset])
-        return cnf
-        
-    def solve_with_pysat(self) -> Tuple[bool, List[int], float]:
-        cnf = self.generate_cnf()   
-        solver = Glucose3()
-        solver.append_formula(cnf)
-        
-        start_time = time.time()
-        satisfiable = solver.solve()
-        end_time = time.time()
-        
-        if satisfiable:
+
+        for num, neighbors in self.number_cells:
+            if len(neighbors) < num:
+                print(f"Unsatisfiable: cell requires {num} traps but only has {len(neighbors)} neighbors")
+                return None, 0.0, False
+            if neighbors:
+                cnf_enc = CardEnc.equals(lits=neighbors, bound=num, encoding=1)
+                cnf.extend(cnf_enc.clauses)
+
+        solver = Solver(bootstrap_with=cnf.clauses)
+        success = solver.solve()
+        grid_out = [row[:] for row in self.grid]
+
+        if success:
             model = solver.get_model()
-            
-            # Initialize all cells as gems (-1)
-            assignment = [-1] * (self.rows * self.cols)
-            
-            # Set traps based on positive variables in the model
-            for var in model:
-                if var > 0 and var <= len(assignment):
-                    var_id = var
-                    row, col = self.reverse_mapping[var_id]
-                    pos = row * self.cols + col
-                    assignment[pos] = 1  # This is a trap
-            
-            # Ensure numbered cells are set correctly (they should be neither trap nor gem)
-            for row, col, _ in self.numbered_cells:
-                pos = row * self.cols + col
-                assignment[pos] = 0  # Mark as numbered cell
-            
-            return True, assignment, end_time - start_time
-        
-        # If unsatisfiable, print more info
-        print("SAT solver found problem unsatisfiable")
-        return False, None, end_time - start_time
-    
-    def solve_brute_force(self) -> Tuple[bool, List[int], float]:
-        start_time = time.time()
-        n_vars = self.rows * self.cols
-        numbered_positions = set((row * self.cols + col) for row, col, _ in self.numbered_cells)
-        non_numbered_positions = [i for i in range(n_vars) if i not in numbered_positions]
-        n_non_numbered = len(non_numbered_positions)
+            assignment = {abs(v): v > 0 for v in model}
+            for (i, j), var in self.var_map.items():
+                grid_out[i][j] = 'T' if assignment.get(var, False) else 'G'
 
-        # Precompute valid bounds for each numbered cell
-        constraints = {pos: num for row, col, num in self.numbered_cells for pos in [row * self.cols + col]}
+        solver.delete()
+        end = time.time()
+        return grid_out, end - start, success
 
-        def _is_valid_assignment(assignment: List[int], constraints: dict) -> bool:
-            for pos, num in constraints.items():
-                row, col = pos // self.cols, pos % self.cols
-                neighbors = self.get_neighbors(row, col)
-                trap_count = sum(1 for n in neighbors if assignment[n[0] * self.cols + n[1]] == 1)
-                
-                if trap_count != num:
-                    return False
-            return True
+    def solve_with_bruteforce(self):
+        start = time.time()
+        grid_out = [row[:] for row in self.grid]
+        blanks = list(self.var_map.keys())
+        V = len(blanks)
 
-        # Try all possible combinations for non-numbered cells using bit manipulation
-        for mask in range(1 << n_non_numbered):  
-            assignment = [0] * n_vars  # 0 for numbered cells
-            for idx, pos in enumerate(non_numbered_positions):
-                assignment[pos] = 1 if (mask >> idx) & 1 else -1  # Use bit manipulation to assign trap/gem
+        solution = None
+        for mask in range(1 << V):
+            is_trap = {}
+            for k in range(V):
+                i, j = blanks[k]
+                is_trap[(i, j)] = bool((mask >> k) & 1)
+            ok = True
+            for num, neigh_vars in self.number_cells:
+                count = 0
+                for var in neigh_vars:
+                    i, j = self.rev_map[var]
+                    if is_trap.get((i, j), False):
+                        count += 1
+                if count != num:
+                    ok = False
+                    break
+            if ok:
+                solution = is_trap
+                break
 
-            # Check constraints early to prune invalid cases
-            if _is_valid_assignment(assignment, constraints):
-                end_time = time.time()
-                return True, assignment, end_time - start_time
+        if solution:
+            for (i, j), isT in solution.items():
+                grid_out[i][j] = 'T' if isT else 'G'
+        success = (solution is not None)
+        end = time.time()
+        return grid_out, end - start, success
 
-        end_time = time.time()
-        return False, None, end_time - start_time
-    
-    def _is_valid_assignment(self, assignment: List[int]) -> bool:
-        for row, col, num in self.numbered_cells:
-            neighbors = self.get_neighbors(row, col)
-            trap_count = sum(1 for n in neighbors if assignment[self.var_mapping[n]-1] > 0)
-            if trap_count != num:
+    def solve_with_backtracking(self):
+        start = time.time()
+        grid_out = [row[:] for row in self.grid]
+        blanks = list(self.var_map.keys())
+        V = len(blanks)
+        assign = [None] * V
+        solution = None
+
+        constraints = []
+        for num, neigh_vars in self.number_cells:
+            neigh_indices = []
+            for idx, (i, j) in enumerate(blanks):
+                if self.var_map[(i, j)] in neigh_vars:
+                    neigh_indices.append(idx)
+            constraints.append((num, neigh_indices))
+
+        def backtrack(idx):
+            nonlocal solution
+            if solution is not None:
+                return True
+            if idx == V:
+                solution = assign.copy()
+                return True
+            assign[idx] = False
+            if self._check_partial(assign, constraints):
+                if backtrack(idx + 1):
+                    return True
+            assign[idx] = True
+            if self._check_partial(assign, constraints):
+                if backtrack(idx + 1):
+                    return True
+            assign[idx] = None
+            return False
+
+        backtrack(0)
+        if solution is not None:
+            for k, (i, j) in enumerate(blanks):
+                grid_out[i][j] = 'T' if solution[k] else 'G'
+        success = (solution is not None)
+        end = time.time()
+        return grid_out, end - start, success
+
+    def _check_partial(self, assign, constraints):
+        for num, neigh in constraints:
+            assigned_traps = 0
+            unassigned = 0
+            for idx in neigh:
+                if assign[idx] is True:
+                    assigned_traps += 1
+                elif assign[idx] is None:
+                    unassigned += 1
+            if assigned_traps > num or assigned_traps + unassigned < num:
                 return False
         return True
-    
-    def solve_backtracking(self) -> Tuple[bool, List[int], float]:
-        start_time = time.time()
-        n_vars = self.rows * self.cols
-        assignment = [0] * n_vars
-        
-        def check_constraints(pos: int) -> bool:
-            # Check all numbered cells
-            for row, col, num in self.numbered_cells:
-                neighbors = self.get_neighbors(row, col)
-                trap_count = 0
-                assigned_count = 0
-                
-                # Count traps and assigned cells in neighbors
-                for n_row, n_col in neighbors:
-                    n_pos = n_row * self.cols + n_col
-                    if n_pos <= pos and assignment[n_pos] != 0:  # Only check assigned positions
-                        assigned_count += 1
-                        if assignment[n_pos] > 0:  # If it's a trap
-                            trap_count += 1
-                
-                # If we have too many traps already, this is invalid
-                if trap_count > num:
-                    return False
-                
-                # If all neighbors are assigned, we must have exactly num traps
-                if assigned_count == len(neighbors) and trap_count != num:
-                    return False
-                
-                # If some neighbors are unassigned, check if we can still satisfy the constraint
-                if assigned_count < len(neighbors):
-                    remaining_cells = len(neighbors) - assigned_count
-                    # We need at least (num - trap_count) more traps
-                    min_required_traps = num - trap_count
-                    # We can't have more traps than remaining cells
-                    if min_required_traps > remaining_cells:
-                        return False
-                    # We can't have more traps than the number requires
-                    if trap_count + remaining_cells < num:
-                        return False
-            
-            return True
 
-        def backtrack(pos: int) -> bool:
-            if pos == n_vars:
-                return True  # All positions assigned and constraints satisfied
-            
-            row, col = pos // self.cols, pos % self.cols
-            # Skip numbered cells as they can't be traps or gems
-            if self.is_numbered_cell(row, col):
-                assignment[pos] = 0  # Just to be explicit
-                return backtrack(pos + 1)
+    def print_grid(self, grid):
+        for row in grid:
+            print(', '.join(row))
 
-            # Try setting current position to trap
-            assignment[pos] = 1
-            if check_constraints(pos) and backtrack(pos + 1):
-                return True
-                
-            # Try setting current position to gem
-            assignment[pos] = -1
-            if check_constraints(pos) and backtrack(pos + 1):
-                return True
-                
-            # Backtrack
-            assignment[pos] = 0
-            return False
-        
-        solution_found = backtrack(0)
-        end_time = time.time()
-        
-        if solution_found:
-            return True, assignment, end_time - start_time
-        return False, None, end_time - start_time
-        
-    def display_solution(self, solution: List[int]):
-        if not solution:
-            print("No solution found!")
-            return
-            
-        display_grid = np.zeros((self.rows, self.cols), dtype=str)
-        for i in range(self.rows):
-            for j in range(self.cols):
-                var_id = self.var_mapping[(i, j)]
-                if solution[var_id-1] > 0:
-                    display_grid[i, j] = 'T'  # Trap
-                else:
-                    display_grid[i, j] = 'G'  # Gem
-                    
-        # Overlay numbered cells
-        for row, col, num in self.numbered_cells:
-            display_grid[row, col] = str(num)
-            
-        print(display_grid)
+    def write_output(self, grid):
+        out_name = self.filename.replace('input', 'output')
+        with open(out_name, 'w') as f:
+            for row in grid:
+                f.write(', '.join(row) + '\n')
