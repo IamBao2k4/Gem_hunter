@@ -1,7 +1,7 @@
 import time
 from itertools import product, combinations
 from pysat.formula import CNF
-from pysat.solvers import Solver
+from pysat.solvers import Glucose3
 
 class GemHunter:
     def __init__(self, filename):
@@ -36,32 +36,32 @@ class GemHunter:
                         if 0 <= ni < self.rows and 0 <= nj < self.cols:
                             if self.grid[ni][nj] == '_' and (ni, nj) in self.var_map:
                                 neighbors.append(self.var_map[(ni, nj)])
-                    self.number_cells.append((num, neighbors))
+                    self.number_cells.append((num, neighbors, i, j))
 
-    def exactly_k(self, vars_list, k):
-        cnf = []
-        if k > 0:
-            for comb in combinations(vars_list, len(vars_list) - k + 1):
-                cnf.append(list(comb))
-        if k < len(vars_list):
-            for comb in combinations(vars_list, k + 1):
-                cnf.append([-v for v in comb])
-        return cnf
+        self.validate_input()
+
+    def validate_input(self):
+        for num, neighbors, i, j in self.number_cells:
+            if len(neighbors) < num:
+                print(f"[INVALID INPUT] Cell at ({i},{j}) requires {num} traps but only has {len(neighbors)} empty neighbors.")
 
     def solve_with_sat(self):
-        start = time.time()
-        cnf = CNF()
+        start_time = time.time()
+        clauses = []
 
-        for num, neighbors in self.number_cells:
+        for num, neighbors, i, j in self.number_cells:
             if len(neighbors) < num:
-                print(f"Unsatisfiable: cell requires {num} traps but only has {len(neighbors)} neighbors")
+                print(f"Unsatisfiable at ({i}, {j}): cell requires {num} traps but only has {len(neighbors)} neighbors")
                 return None, 0.0, False
             if neighbors:
-                local_cnf = self.exactly_k(neighbors, num)
-                for clause in local_cnf:
-                    cnf.append(clause)
+                clauses += self.encode_exactly_k(neighbors, num)
 
-        solver = Solver(bootstrap_with=cnf.clauses)
+        cnf = CNF()
+        cnf.extend(clauses)
+
+        solver = Glucose3()
+        solver.append_formula(cnf)
+
         success = solver.solve()
         grid_out = [row[:] for row in self.grid]
 
@@ -72,8 +72,19 @@ class GemHunter:
                 grid_out[i][j] = 'T' if assignment.get(var, False) else 'G'
 
         solver.delete()
-        end = time.time()
-        return grid_out, end - start, success
+        end_time = time.time()
+
+        return grid_out, end_time - start_time, success
+
+    def encode_exactly_k(self, var_ids, k):
+        clauses = []
+        if k > 0:
+            for combo in combinations(var_ids, len(var_ids) - k + 1):
+                clauses.append(list(combo))
+        if k < len(var_ids):
+            for combo in combinations(var_ids, k + 1):
+                clauses.append([-v for v in combo])
+        return clauses
 
     def solve_with_bruteforce(self):
         start = time.time()
@@ -82,25 +93,28 @@ class GemHunter:
         V = len(blanks)
 
         solution = None
-        for mask in range(1 << V):
-            is_trap = {}
-            for k in range(V):
-                i, j = blanks[k]
-                is_trap[(i, j)] = bool((mask >> k) & 1)
-            ok = True
-            for num, neigh_vars in self.number_cells:
-                count = 0
-                for var in neigh_vars:
-                    i, j = self.rev_map[var]
-                    if is_trap.get((i, j), False):
-                        count += 1
-                if count != num:
-                    ok = False
+        if V < 20:
+            for mask in range(1 << V):
+                is_trap = {}
+                for k in range(V):
+                    i, j = blanks[k]
+                    is_trap[(i, j)] = bool((mask >> k) & 1)
+                ok = True
+                for num, neigh_vars, _, _ in self.number_cells:
+                    count = 0
+                    for var in neigh_vars:
+                        i, j = self.rev_map[var]
+                        if is_trap.get((i, j), False):
+                            count += 1
+                    if count != num:
+                        ok = False
+                        break
+                if ok:
+                    solution = is_trap
                     break
-            if ok:
-                solution = is_trap
-                break
-
+        else:
+            print("Grid too large for brute-force search.")
+            return grid_out, 0.0, False
         if solution:
             for (i, j), isT in solution.items():
                 grid_out[i][j] = 'T' if isT else 'G'
@@ -113,62 +127,62 @@ class GemHunter:
         grid_out = [row[:] for row in self.grid]
         blanks = list(self.var_map.keys())
         V = len(blanks)
-        assign = [None] * V
-        solution = None
+        model = [None] * (self.rows * self.cols + 1)
+        solution_found = [False]
 
         constraints = []
-        for num, neigh_vars in self.number_cells:
-            neigh_indices = []
-            for idx, (i, j) in enumerate(blanks):
-                if self.var_map[(i, j)] in neigh_vars:
-                    neigh_indices.append(idx)
-            constraints.append((num, neigh_indices))
+        for num, neigh_vars, _, _ in self.number_cells:
+            indices = []
+            for (i, j) in blanks:
+                var = self.var_map[(i, j)]
+                if var in neigh_vars:
+                    indices.append(var)
+            constraints.append((num, indices))
 
-        def backtrack(idx):
-            nonlocal solution
-            if solution is not None:
+        def check_constraints(model):
+            for num, neigh_vars in constraints:
+                count_true = 0
+                count_undef = 0
+                for var in neigh_vars:
+                    if model[var] is True:
+                        count_true += 1
+                    elif model[var] is None:
+                        count_undef += 1
+                if count_true > num or count_true + count_undef < num:
+                    return False
+            return True
+
+        def backtrack(index):
+            if index == len(blanks):
+                solution_found[0] = True
                 return True
-            if idx == V:
-                solution = assign.copy()
-                return True
-            assign[idx] = False
-            if self._check_partial(assign, constraints):
-                if backtrack(idx + 1):
-                    return True
-            assign[idx] = True
-            if self._check_partial(assign, constraints):
-                if backtrack(idx + 1):
-                    return True
-            assign[idx] = None
+
+            i, j = blanks[index]
+            var = self.var_map[(i, j)]
+
+            for value in [True, False]:
+                model[var] = value
+                if check_constraints(model):
+                    if backtrack(index + 1):
+                        return True
+                model[var] = None
+
             return False
 
         backtrack(0)
-        if solution is not None:
-            for k, (i, j) in enumerate(blanks):
-                grid_out[i][j] = 'T' if solution[k] else 'G'
-        success = (solution is not None)
+        if solution_found[0]:
+            for (i, j), var in self.var_map.items():
+                grid_out[i][j] = 'T' if model[var] else 'G'
+        success = solution_found[0]
         end = time.time()
         return grid_out, end - start, success
-
-    def _check_partial(self, assign, constraints):
-        for num, neigh in constraints:
-            assigned_traps = 0
-            unassigned = 0
-            for idx in neigh:
-                if assign[idx] is True:
-                    assigned_traps += 1
-                elif assign[idx] is None:
-                    unassigned += 1
-            if assigned_traps > num or assigned_traps + unassigned < num:
-                return False
-        return True
 
     def print_grid(self, grid):
         for row in grid:
             print(', '.join(row))
 
-    def write_output(self, grid):
-        out_name = self.filename.replace('input', 'output')
+    def write_output(self, grid, method_name):
+        out_name = self.filename.replace('input', 'output' + method_name)
         with open(out_name, 'w') as f:
             for row in grid:
                 f.write(', '.join(row) + '\n')

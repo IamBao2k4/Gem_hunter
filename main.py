@@ -2,8 +2,8 @@ import glob
 from gem_hunter import GemHunter
 
 if __name__ == '__main__':
-    # Find all input files in 'testcase/' directory
-    input_files = sorted(glob.glob('testcases/input_2.txt'))
+    # Find all input files in 'testcases/' directory
+    input_files = sorted(glob.glob('testcases/input_*.txt'))
     methods = [
         ('PySAT',    GemHunter.solve_with_sat),
         ('Backtracking', GemHunter.solve_with_backtracking),
@@ -18,5 +18,5 @@ if __name__ == '__main__':
             print(f"[{name}] Success: {success}, Time: {elapsed:.4f}s")
             game.print_grid(grid_out)
             if success:
-                game.write_output(grid_out)
+                game.write_output(grid_out, name)
             print()  # blank line between methods
