@@ -1,131 +1,135 @@
-# Gem Hunter Game
+# 📦 Gem Hunter
 
-A Python implementation of the Gem Hunter game using Conjunctive Normal Form (CNF) and various solving algorithms.
+A Python project that solves the **Gem Hunter** puzzle using three different algorithms: **PySAT (SAT solver)**, **brute force**, and **backtracking**.
 
-## Description
+---
 
-In this game, players explore a grid to find hidden gems while avoiding traps. Each numbered cell in the grid represents the number of traps surrounding it (horizontally, vertically, or diagonally). The game is solved using three different approaches:
+## 📘 Overview
 
-1. CNF with PySAT Library
-2. Brute Force Algorithm
-3. Backtracking Algorithm
+**Gem Hunter** is a logic puzzle played on a grid. Each cell may:
 
-## Requirements
+- Be **empty** (`_`)
+- Contain a **number** (indicating how many traps are adjacent)
+- Be determined as a **trap (`T`)** or **gem (`G`)**
+
+🎯 The goal is to fill the grid so that:
+
+- All numbered cells are satisfied
+- All unknown (`_`) cells are assigned as either traps or gems
+
+---
+
+## ✨ Features
+
+- 🔄 **Three solving algorithms**:
+  - SAT Solver using **PySAT (Glucose3)**
+  - **Brute-force** search
+  - **Backtracking** search
+
+- 📐 Supports grids of **various sizes** (small, medium, large)
+- 🧪 Includes **test cases** and **output comparison**
+
+---
+
+## 🛠 Requirements
 
 - Python 3.7+
-- Required packages (install using `pip install -r requirements.txt`):
-  - python-sat
-  - numpy
+- `python-sat`
+- `numpy`
 
-## Project Structure
-
-```
-gem_hunter/
-├── gem_hunter.py      # Main game implementation
-├── generate_testcases.py  # Script to generate test cases
-├── run_tests.py       # Script to run and compare algorithms
-├── example.py         # Example usage
-├── requirements.txt   # Package dependencies
-├── testcases/        # Test cases directory
-│   ├── input 1.txt   # 5x5 grid test case
-│   ├── output 1.txt
-│   ├── input 2.txt   # 11x11 grid test case
-│   ├── output 2.txt
-│   ├── input 3.txt   # 20x20 grid test case
-│   └── output 3.txt
-└── README.md         # This file
+📦 Install dependencies:
+```bash
+pip install -r requirements.txt
 ```
 
-## File Format
+---
 
-### Input Files
-- Named as "input x.txt" where x is the test case number
-- Each cell is separated by commas
-- '_' represents empty cells
-- Numbers represent the count of surrounding traps
+## 📁 Project Structure
 
-Example input:
+```
+gem_hunter.py      # Main game logic and solvers
+main.py            # Runs all solvers on all testcases
+requirements.txt   # Python dependencies
+testcases/         # Input and output files for test cases
+README.md          # Project documentation
+```
+
+---
+
+## 📄 File Formats
+
+### 🧾 Input Files
+- Located in `testcases/` and named `input_x.txt`
+- Each line is a row, cells separated by commas
+- Use `_` for unknown cells, numbers for clue cells
+
+**Example:**
 ```
 3,_,2,_
 _,_,2,_
 _,3,1,_
 ```
 
-### Output Files
-- Named as "output x.txt" where x is the test case number
-- 'T' represents traps
-- 'G' represents gems
-- Numbers from input are preserved
+### 🧾 Output Files
+- Located in `testcases/` and named `output<Method>_x.txt`
+- Same format as input, but unknowns replaced with:
+  - `'T'` (trap)
+  - `'G'` (gem)
+- Numbers are preserved
 
-Example output:
+**Example:**
 ```
 3,T,2,G
 T,T,2,G
 T,3,1,G
 ```
 
-## Implementation Details
+---
 
-### CNF Formulation
-The game is formulated as a CNF problem where:
-1. Each cell is represented by a boolean variable:
-   - True (T): The cell contains a trap
-   - False (G): The cell contains a gem
-2. For each numbered cell with value n:
-   - At least n neighboring cells must be traps
-   - At most n neighboring cells can be traps
+## ▶️ How to Use
 
-### Solving Methods
-
-1. **PySAT Solver**:
-   - Uses the Glucose3 SAT solver
-   - Converts game constraints to CNF clauses
-   - Generally fastest for complex puzzles
-
-2. **Brute Force**:
-   - Tries all possible combinations
-   - Guarantees finding a solution if one exists
-   - Becomes impractical for large grids
-
-3. **Backtracking**:
-   - Systematically explores possible assignments
-   - More efficient than brute force
-   - Can handle medium-sized grids effectively
-
-## Usage
-
-1. Install dependencies:
+### Run all solvers on all test cases:
 ```bash
-pip install -r requirements.txt
+python main.py
 ```
 
-2. Run example:
-```bash
-python example.py
-```
+### Output:
+- For each input file, the program prints the result for each algorithm
+- Writes the result to a corresponding file, e.g., `outputPySAT_1.txt`
 
-3. Generate test cases:
-```bash
-python generate_testcases.py
-```
+---
 
-4. Run performance comparison:
-```bash
-python run_tests.py
-```
+## 🧠 Algorithms
 
-## Performance Analysis
+### 1. 🧩 PySAT Solver
+- Converts the puzzle into a **CNF formula**
+- Uses **Glucose3 SAT solver**
+- ✅ Best for **large and complex** grids
 
-The implementation includes three test cases of different sizes:
-1. 5x5 grid (small)
-2. 11x11 grid (medium)
-3. 20x20 grid (large)
+### 2. 🚀 Brute Force
+- Tries all possible assignments for unknown cells
+- ✅ Guarantees a solution if one exists
+- ❌ Only practical for **small grids**
 
-Typical performance comparison:
-- PySAT: Most efficient for all grid sizes
-- Backtracking: Good for small/medium grids
-- Brute Force: Only practical for small grids
+### 3. 🔁 Backtracking
+- Recursively assigns values
+- Prunes invalid assignments early
+- ✅ More efficient than brute force for **medium-sized** grids
 
-## License
+---
 
-This project is open source and available under the MIT License. 
+## 🧪 Test Cases
+
+| File Name              | Size      |
+|------------------------|-----------|
+| `input_1.txt`          | 5x5 grid  |
+| `input_2.txt`          | 10x10 grid |
+| `input_3.txt`          | 20x20 grid |
+
+Each input file has a corresponding output for each algorithm.
+
+---
+
+## 📄 License
+
+This project is open source and available under the **MIT License**.
