@@ -1,8 +1,7 @@
 import time
+from itertools import product, combinations
 from pysat.formula import CNF
 from pysat.solvers import Solver
-from pysat.card import CardEnc
-from itertools import product
 
 class GemHunter:
     def __init__(self, filename):
@@ -39,6 +38,16 @@ class GemHunter:
                                 neighbors.append(self.var_map[(ni, nj)])
                     self.number_cells.append((num, neighbors))
 
+    def exactly_k(self, vars_list, k):
+        cnf = []
+        if k > 0:
+            for comb in combinations(vars_list, len(vars_list) - k + 1):
+                cnf.append(list(comb))
+        if k < len(vars_list):
+            for comb in combinations(vars_list, k + 1):
+                cnf.append([-v for v in comb])
+        return cnf
+
     def solve_with_sat(self):
         start = time.time()
         cnf = CNF()
@@ -48,8 +57,9 @@ class GemHunter:
                 print(f"Unsatisfiable: cell requires {num} traps but only has {len(neighbors)} neighbors")
                 return None, 0.0, False
             if neighbors:
-                cnf_enc = CardEnc.equals(lits=neighbors, bound=num, encoding=1)
-                cnf.extend(cnf_enc.clauses)
+                local_cnf = self.exactly_k(neighbors, num)
+                for clause in local_cnf:
+                    cnf.append(clause)
 
         solver = Solver(bootstrap_with=cnf.clauses)
         success = solver.solve()
